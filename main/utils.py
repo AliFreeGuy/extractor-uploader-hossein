@@ -9,6 +9,11 @@ from typing import Optional
 import redis.asyncio as redis
 from pyrogram.types import (ReplyKeyboardMarkup, InlineKeyboardMarkup,InlineKeyboardButton , KeyboardButton , WebAppInfo)
 from typing import Optional
+from tortoise import Tortoise, fields
+from tortoise.models import Model
+
+
+
 
 load_dotenv(override=True) 
 
@@ -128,3 +133,32 @@ def log_env_variables():
         "PROXY": PROXY or "Disabled",
     }
     logger.info("Loaded Environment Variables:\n" + json.dumps(safe_env, indent=4, ensure_ascii=False))
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+class User(Model):
+    id = fields.IntField(pk=True)
+    user_id = fields.IntField(unique=True)
+
+    class Meta:
+        table = "users"
+
+async def init_db():
+    await Tortoise.init(
+        db_url='sqlite://db.sqlite3',
+        modules={'models': ['main.utils']}
+    )
+    await Tortoise.generate_schemas()
