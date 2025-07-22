@@ -12,6 +12,9 @@ from typing import Optional
 from tortoise import Tortoise, fields
 from tortoise.models import Model
 
+from datetime import datetime
+from zoneinfo import ZoneInfo  
+
 
 
 
@@ -26,7 +29,7 @@ PROXY = None
 REDIS_HOST = os.getenv("REDIS_HOST", "localhost")
 REDIS_PORT = int(os.getenv("REDIS_PORT", 6379))
 REDIS_DB = int(os.getenv("REDIS_DB", 0))
-
+ADMINS = [int(admin) for admin in os.getenv("ADMINS", "").split(",") if admin]
 
 
 if DEBUG:
@@ -74,10 +77,18 @@ class RedisCache:
 
 
 
-import logging
+
+class TehranFormatter(logging.Formatter):
+    def formatTime(self, record, datefmt=None):
+        tz = ZoneInfo("Asia/Tehran")
+        dt = datetime.fromtimestamp(record.created, tz)
+        if datefmt:
+            return dt.strftime(datefmt)
+        else:
+            return dt.isoformat()
 
 def setup_logger(name="bot", level=logging.INFO, logfile="app.log"):
-    formatter = logging.Formatter(
+    formatter = TehranFormatter(
         "[%(asctime)s] [%(levelname)s] %(name)s - %(message)s", "%Y-%m-%d %H:%M:%S"
     )
 
@@ -102,6 +113,7 @@ def setup_logger(name="bot", level=logging.INFO, logfile="app.log"):
 
 logger = setup_logger("channel-bot", level=logging.INFO, logfile="channel-bot.log")
 
+logger.info("ربات با موفقیت راه‌اندازی شد!")
 
 
 
@@ -149,12 +161,24 @@ def log_env_variables():
 
 
 
-class User(Model):
-    id = fields.IntField(pk=True)
-    user_id = fields.IntField(unique=True)
+
+class Settings(Model):
+    id = fields.IntField(pk=True) 
+    uploader_username = fields.CharField(max_length=255, null=True)  
+    uploader_type = fields.CharField(max_length=50, null=True)  
+    is_auto_extractor = fields.BooleanField(default=False) 
 
     class Meta:
-        table = "users"
+        table = "settings" 
+        
+        
+    @classmethod
+    async def get_singleton(cls):
+        obj = await cls.first()
+        if not obj:
+            obj = await cls.create()
+        return obj
+
 
 async def init_db():
     await Tortoise.init(
@@ -162,3 +186,62 @@ async def init_db():
         modules={'models': ['main.utils']}
     )
     await Tortoise.generate_schemas()
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+def build_settings_message(settings: Settings):
+    text = (
+        f"استخراج اتوماتیک: `{'✅ روشن' if settings.is_auto_extractor else '❌ خاموش'}`\n"
+        f"آپلودر: `{settings.uploader_username or 'انتخاب نشده'}`\n"
+        f"نوع آپلودر: `{settings.uploader_type or 'انتخاب نشده'}`"
+    )
+    keyboard = KeyboardBuilder.inline(
+        [(f"استخراج اتوماتیک {'خاموش' if settings.is_auto_extractor else 'روشن'}", "toggle_auto_extractor")],
+        [(f"تغییر آپلودر (فعلی: {settings.uploader_username or '---'})", "change_uploader")],
+        [(f"تغییر نوع آپلودر (فعلی: {settings.uploader_type or '---'})", "change_uploader_type")],
+    )
+    return text, keyboard
+
+
+
+
+
+
+class KeyboardBuilder:
+    @staticmethod
+    def reply(*rows, resize=True, one_time=False):
+
+        keyboard = [list(row) if isinstance(row, (list, tuple)) else [row] for row in rows]
+        return ReplyKeyboardMarkup(keyboard, resize_keyboard=resize, one_time_keyboard=one_time)
+
+    @staticmethod
+    def inline(*rows):
+
+        keyboard = []
+        for row in rows:
+            buttons = []
+            for btn in row:
+                buttons.append(InlineKeyboardButton(btn[0], callback_data=btn[1]))
+            keyboard.append(buttons)
+        return InlineKeyboardMarkup(keyboard)
+
+
+
+
+
+class UploaderTypes:
+    ZERO = "zero"
+    TORANG = "torang"
+    FUCKER='fucker'
+    ALL = [ZERO, TORANG , FUCKER]
