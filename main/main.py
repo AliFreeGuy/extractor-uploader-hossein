@@ -23,21 +23,17 @@ self_client = Client("self_client",api_id=API_ID,api_hash=API_HASH,bot_token=SES
 
 
 
-
-
-
 @bot_client.on_message(filters.chat(ADMINS) & filters.text)
 async def bot_client_handler(client, message):
     text = message.text
 
     if text == '/start':
         keyboard = KeyboardBuilder.reply(["تنظیمات"])
-        await message.reply('ربات در خدمت شماست! برای استخراج لینک‌ها پست فوروارد کن یا روی "تنظیمات" بزن.',quote=True,reply_markup=keyboard)
+        await message.reply('ربات در خدمت شماست! برای ارسال پست یا تغییر تنظیمات روی "تنظیمات" بزن.',
+                            quote=True, reply_markup=keyboard)
 
     elif text == 'تنظیمات':
         await command_setting_handler(client, message)
-
-
 
 
 async def command_setting_handler(client, message):
@@ -51,19 +47,26 @@ async def edit_settings_message(callback_query, settings):
     await callback_query.message.edit_text(text, reply_markup=keyboard)
 
 
-
 @bot_client.on_callback_query()
 async def callback_handler(client, callback_query):
     data = callback_query.data
     settings = await Settings.get_singleton()
 
-    if data == "toggle_auto_extractor":
-        settings.is_auto_extractor = not settings.is_auto_extractor
+    # تغییر وضعیت حذف امضا
+    if data == "toggle_auto_remove_sign":
+        settings.auto_remove_sign = not settings.auto_remove_sign
         await settings.save()
-        await callback_query.answer("وضعیت استخراج اتوماتیک تغییر کرد!")
+        await callback_query.answer("وضعیت حذف خودکار امضا تغییر کرد!")
         await edit_settings_message(callback_query, settings)
 
+    # تغییر وضعیت جاگذاری خودکار
+    elif data == "toggle_auto_embed":
+        settings.is_auto_embed_enabled = not settings.is_auto_embed_enabled
+        await settings.save()
+        await callback_query.answer("وضعیت جاگذاری خودکار تغییر کرد!")
+        await edit_settings_message(callback_query, settings)
 
+    # تغییر یوزرنیم آپلودر
     elif data == "change_uploader":
         await callback_query.answer()
         ask_msg = await callback_query.message.reply_text("لطفا یوزرنیم آپلودر را ارسال کنید :")
@@ -75,16 +78,18 @@ async def callback_handler(client, callback_query):
             await ask_msg.edit_text("❌ یوزرنیم نامعتبر است. دوباره تلاش کن."); return
         settings.uploader_username = new_username_msg.text.strip()
         await settings.save()
-        try: await ask_msg.delete(); await new_username_msg.delete()
-        except: pass
+        try: 
+            await ask_msg.delete()
+            await new_username_msg.delete()
+        except: 
+            pass
         await edit_settings_message(callback_query, settings)
 
-
+    # تغییر نوع آپلودر
     elif data == "change_uploader_type":
         kb = KeyboardBuilder.inline(*[[(t, f"set_uploader_type_{t}")] for t in UploaderTypes.ALL])
         await callback_query.message.edit_text("نوع آپلودر را انتخاب کنید:", reply_markup=kb)
         await callback_query.answer()
-
 
     elif data.startswith("set_uploader_type_"):
         selected = data.replace("set_uploader_type_", "")
@@ -98,11 +103,6 @@ async def callback_handler(client, callback_query):
 
     else:
         await callback_query.answer()
-
-
-
-
-
 
 
 

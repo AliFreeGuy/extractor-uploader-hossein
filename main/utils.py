@@ -14,6 +14,7 @@ from tortoise.models import Model
 
 from datetime import datetime
 from zoneinfo import ZoneInfo  
+from tortoise import Tortoise, fields, models
 
 
 
@@ -159,19 +160,16 @@ def log_env_variables():
 
 
 
-
-
-
-class Settings(Model):
-    id = fields.IntField(pk=True) 
-    uploader_username = fields.CharField(max_length=255, null=True)  
-    uploader_type = fields.CharField(max_length=50, null=True)  
-    is_auto_extractor = fields.BooleanField(default=False) 
+class Settings(models.Model):
+    id = fields.IntField(pk=True)
+    uploader_username = fields.CharField(max_length=255, null=True)
+    uploader_type = fields.CharField(max_length=50, null=True)
+    auto_remove_sign = fields.BooleanField(default=False)  # حذف خودکار امضا
+    is_auto_embed_enabled = fields.BooleanField(default=False)  # جاگذاری خودکار در پست
 
     class Meta:
-        table = "settings" 
-        
-        
+        table = "settings"
+
     @classmethod
     async def get_singleton(cls):
         obj = await cls.first()
@@ -193,26 +191,25 @@ async def init_db():
 
 
 
-
-
-
-
-
-
-
 def build_settings_message(settings: Settings):
     text = (
-        f"استخراج اتوماتیک: `{'✅ روشن' if settings.is_auto_extractor else '❌ خاموش'}`\n"
         f"آپلودر: `{settings.uploader_username or 'انتخاب نشده'}`\n"
-        f"نوع آپلودر: `{settings.uploader_type or 'انتخاب نشده'}`"
+        f"نوع آپلودر: `{settings.uploader_type or 'انتخاب نشده'}`\n"
+        f"حذف خودکار امضا: `{'✅ روشن' if settings.auto_remove_sign else '❌ خاموش'}`\n"
+        f"جاگذاری خودکار در پست: `{'✅ روشن' if settings.is_auto_embed_enabled else '❌ خاموش'}`"
     )
+    
+    # تعیین متن دکمه‌ها بر اساس وضعیت
+    toggle_sign_text = "خاموش کردن حذف امضا" if settings.auto_remove_sign else "روشن کردن حذف امضا"
+    toggle_embed_text = "خاموش کردن جاگذاری خودکار" if settings.is_auto_embed_enabled else "روشن کردن جاگذاری خودکار"
+
     keyboard = KeyboardBuilder.inline(
-        [(f"استخراج اتوماتیک {'خاموش' if settings.is_auto_extractor else 'روشن'}", "toggle_auto_extractor")],
         [(f"تغییر آپلودر (فعلی: {settings.uploader_username or '---'})", "change_uploader")],
         [(f"تغییر نوع آپلودر (فعلی: {settings.uploader_type or '---'})", "change_uploader_type")],
+        [(toggle_sign_text, "toggle_auto_remove_sign")],
+        [(toggle_embed_text, "toggle_auto_embed")],
     )
     return text, keyboard
-
 
 
 
