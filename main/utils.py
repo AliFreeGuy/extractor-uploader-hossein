@@ -242,3 +242,46 @@ class UploaderTypes:
     TORANG = "torang"
     FUCKER='fucker'
     ALL = [ZERO, TORANG , FUCKER]
+
+
+
+
+
+
+
+def extract_links(message):
+    results = []
+
+    def process_entities(text, entities):
+        if not text or not entities:
+            return
+        lines = text.splitlines()
+
+        for entity in entities:
+            if str(entity.type) == "MessageEntityType.TEXT_LINK":
+                url = entity.url
+                offset = entity.offset
+                length = entity.length
+                linked_text = text[offset:offset+length]
+
+                # پیدا کردن خطی که شامل offset هست
+                line = None
+                start_pos = 0
+                for l in lines:
+                    end_pos = start_pos + len(l) + 1  # +1 برای newline
+                    if start_pos <= offset < end_pos:
+                        line = l
+                        break
+                    start_pos = end_pos
+
+                results.append({
+                    "text": line if line else linked_text,   # کل خط
+                    "link": url,                             # لینک
+                    "offset_range": (offset, offset+length), # محدوده افست
+                    "linked_text": linked_text               # متن دقیق لینک شده
+                })
+
+    process_entities(message.text, message.entities)
+    process_entities(message.caption, message.caption_entities)
+
+    return results

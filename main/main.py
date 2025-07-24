@@ -1,7 +1,7 @@
 import asyncio
 from os import environ as env
 from pyrogram import Client, idle ,filters
-from .utils import UploaderTypes, API_ID, API_HASH, BOT_TOKEN, SESSION_STRING, DEBUG, PROXY,setup_logger ,RedisCache , log_env_variables ,Settings,init_db,ADMINS ,KeyboardBuilder,build_settings_message
+from .utils import UploaderTypes, API_ID, extract_links,API_HASH, BOT_TOKEN, SESSION_STRING, DEBUG, PROXY,setup_logger ,RedisCache , log_env_variables ,Settings,init_db,ADMINS ,KeyboardBuilder,build_settings_message
 from pyrogram.errors import UserAlreadyParticipant ,MessageNotModified
 import httpx
 # from apscheduler.schedulers.asyncio import AsyncIOScheduler
@@ -10,30 +10,48 @@ from pyrogram.enums import ParseMode
 from tortoise import Tortoise, fields
 from tortoise.models import Model
 from pyromod import listen
+from .tasks import extractor_task
 
-logger = setup_logger("channel-bot", level="INFO")
+
+
+logger = setup_logger("bot-log", level="INFO")
 
 
 bot_client = Client('bot-client',api_id=API_ID,api_hash=API_HASH,bot_token=BOT_TOKEN,proxy=PROXY)
-self_client = Client("self_client",api_id=API_ID,api_hash=API_HASH,bot_token=SESSION_STRING, proxy=PROXY)
+# self_client = Client("self_client",api_id=API_ID,api_hash=API_HASH,bot_token=SESSION_STRING, proxy=PROXY)
 
 
 # ---------------------------------------------------------------------BOT HANDLER------------------------------------------------------------------------
 
 
-
-
-@bot_client.on_message(filters.chat(ADMINS) & filters.text)
+@bot_client.on_message(filters.chat(ADMINS))
 async def bot_client_handler(client, message):
-    text = message.text
+    print(message)
 
-    if text == '/start':
+    task_data = {}
+    task_data['user_chat_id']  = int(message.from_user.id)
+    task_data['input_message_id'] = int(message.id)
+    
+
+    links = extract_links(message)
+    print(links)
+    for link in links : 
+        await client.send_message(message.from_user.id , f'{link["text"]} : {link["link"]}')
+
+    if message.text == '/start':
         keyboard = KeyboardBuilder.reply(["تنظیمات"])
         await message.reply('ربات در خدمت شماست! برای ارسال پست یا تغییر تنظیمات روی "تنظیمات" بزن.',
                             quote=True, reply_markup=keyboard)
 
-    elif text == 'تنظیمات':
+    elif message.text == 'تنظیمات':
         await command_setting_handler(client, message)
+
+
+
+
+
+
+
 
 
 async def command_setting_handler(client, message):
@@ -124,9 +142,6 @@ async def callback_handler(client, callback_query):
 
 
 
-@self_client.on_message(group=1)
-async def self_client_handler(client, message):
-    print('this is self clilient message ')
 
 
 
@@ -159,15 +174,12 @@ async def self_client_handler(client, message):
 
 
 
+# --------------------------------------------------------------------- SELF CLIENT ------------------------------------------------------------------------
 
 
-
-
-
-
-
-
-
+# @self_client.on_message(group=1)
+# async def self_client_handler(client, message):
+#     print('this is self clilient message ')
 
 
 
@@ -185,7 +197,7 @@ async def main():
     await redis_cache.connect()
     logger.info("Redis connected.")
     await bot_client.start()
-    await self_client.start()
+    # await self_client.start()
     bot_info = await bot_client.get_me()
     logger.info(f"Clients {bot_info.username} started successfully.")
     logger.info("Clients are now listening for incoming messages... (Press Ctrl+C to exit)")
@@ -193,7 +205,7 @@ async def main():
         await idle()  
     finally:
         await bot_client.stop()
-        await self_client.stop()
+        # await self_client.stop()
         await redis_cache.close()
         await Tortoise.close_connections()
         logger.info("Clients stopped, Redis connection closed, and DB connections closed.")
