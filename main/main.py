@@ -1,109 +1,171 @@
 import asyncio
+import uuid
 from os import environ as env
-from pyrogram import Client, idle ,filters
-from .utils import UploaderTypes, API_ID, extract_links,API_HASH, BOT_TOKEN, SESSION_STRING, DEBUG, PROXY,setup_logger ,RedisCache , log_env_variables ,Settings,init_db,ADMINS ,KeyboardBuilder,build_settings_message
-from pyrogram.errors import UserAlreadyParticipant ,MessageNotModified
-import httpx
-# from apscheduler.schedulers.asyncio import AsyncIOScheduler
-from pyrogram.errors import FloodWait
-from pyrogram.enums import ParseMode
-from tortoise import Tortoise, fields
-from tortoise.models import Model
+
+from pyrogram import Client, filters, idle
+from pyrogram.errors import MessageNotModified, UserAlreadyParticipant
+from pyrogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 from pyromod import listen
+from tortoise import Tortoise
+
 from .tasks import extractor_task
-
-
+from .utils import (API_HASH, API_ID, BOT_TOKEN, DEBUG, PROXY,
+                    RedisCache, SESSION_STRING, UploaderTypes, Settings,
+                    init_db, setup_logger, log_env_variables, ADMINS,
+                    KeyboardBuilder, build_settings_message, extract_links)
 
 logger = setup_logger("bot-log", level="INFO")
 
+bot_client = Client('bot-client', api_id=API_ID, api_hash=API_HASH, bot_token=BOT_TOKEN, proxy=PROXY)
 
-bot_client = Client('bot-client',api_id=API_ID,api_hash=API_HASH,bot_token=BOT_TOKEN,proxy=PROXY)
-# self_client = Client("self_client",api_id=API_ID,api_hash=API_HASH,bot_token=SESSION_STRING, proxy=PROXY)
-
-
-# ---------------------------------------------------------------------BOT HANDLER------------------------------------------------------------------------
-
+# ---------------------------------------------------------------------
+# BOT HANDLERS
+# ---------------------------------------------------------------------
 
 @bot_client.on_message(filters.chat(ADMINS))
 async def bot_client_handler(client, message):
-    print(message)
-
-    task_data = {}
-    task_data['user_chat_id']  = int(message.from_user.id)
-    task_data['input_message_id'] = int(message.id)
-    
-
     links = extract_links(message)
-    print(links)
-    for link in links : 
-        await client.send_message(message.from_user.id , f'{link["text"]} : {link["link"]}')
+
+    if links:
+        post_data = {
+            'user_chat_id': int(message.from_user.id),
+            'input_message_id': int(message.id),
+            'links': []
+        }
+
+        keyboard_rows = []
+        for link in links:
+            link_id = str(uuid.uuid4())
+            post_data['links'].append({
+                'id': link_id,
+                'text': link['text'],
+                'linked_text': link['linked_text'],
+                'link': link['link'],
+                'offset_start' : link['offset_start'] ,
+                'offset_end' : link['offset_end'] ,
+                'selected': True
+            })
+            button = InlineKeyboardButton(f"✅ {link['text']}", callback_data=f"toggle_{message.id}_{link_id}")
+            keyboard_rows.append([button])
+
+        await redis_cache.set(f"post:{message.id}", post_data)
+
+        keyboard_rows.append([InlineKeyboardButton("🚀 شروع", callback_data=f"start_{message.id}")])
+        reply_markup = InlineKeyboardMarkup(keyboard_rows)
+        await message.reply_text("لینک‌های زیر پیدا شدند. موارد مورد نظر را انتخاب کرده و سپس دکمه 'شروع' را بزنید:", reply_markup=reply_markup, quote=True)
+        return
 
     if message.text == '/start':
         keyboard = KeyboardBuilder.reply(["تنظیمات"])
-        await message.reply('ربات در خدمت شماست! برای ارسال پست یا تغییر تنظیمات روی "تنظیمات" بزن.',
-                            quote=True, reply_markup=keyboard)
+        await message.reply('ربات در خدمت شماست! برای ارسال پست یا تغییر تنظیمات روی "تنظیمات" بزن.', quote=True, reply_markup=keyboard)
 
     elif message.text == 'تنظیمات':
         await command_setting_handler(client, message)
-
-
-
-
-
-
-
-
 
 async def command_setting_handler(client, message):
     settings = await Settings.get_singleton()
     text, keyboard = build_settings_message(settings)
     await message.reply(text, reply_markup=keyboard)
 
-
 async def edit_settings_message(callback_query, settings):
     text, keyboard = build_settings_message(settings)
-    await callback_query.message.edit_text(text, reply_markup=keyboard)
-
+    try:
+        await callback_query.message.edit_text(text, reply_markup=keyboard)
+    except MessageNotModified:
+        pass
 
 @bot_client.on_callback_query()
 async def callback_handler(client, callback_query):
     data = callback_query.data
-    settings = await Settings.get_singleton()
 
-    # تغییر وضعیت حذف امضا
     if data == "toggle_auto_remove_sign":
+        settings = await Settings.get_singleton()
         settings.auto_remove_sign = not settings.auto_remove_sign
         await settings.save()
         await callback_query.answer("وضعیت حذف خودکار امضا تغییر کرد!")
         await edit_settings_message(callback_query, settings)
+        return
 
-    # تغییر وضعیت جاگذاری خودکار
     elif data == "toggle_auto_embed":
+        settings = await Settings.get_singleton()
         settings.is_auto_embed_enabled = not settings.is_auto_embed_enabled
         await settings.save()
         await callback_query.answer("وضعیت جاگذاری خودکار تغییر کرد!")
         await edit_settings_message(callback_query, settings)
+        return
 
-    # تغییر یوزرنیم آپلودر
-    elif data == "change_uploader":
+    parts = data.split("_")
+    
+    if parts[0] == "toggle" and len(parts) == 3 and parts[1].isdigit():
+        message_id = int(parts[1])
+        link_id_to_toggle = parts[2]
+
+        post_data = await redis_cache.get(f"post:{message_id}")
+        if not post_data:
+            await callback_query.answer("خطا: اطلاعات این پست منقضی شده است.", show_alert=True)
+            return
+
+        for link in post_data['links']:
+            if link['id'] == link_id_to_toggle:
+                link['selected'] = not link['selected']
+                break
+        
+        await redis_cache.set(f"post:{message_id}", post_data)
+
+        keyboard_rows = []
+        for link in post_data['links']:
+            status_emoji = "✅" if link['selected'] else "❌"
+            button_text = f"{status_emoji} {link['text']}"
+            button_callback = f"toggle_{message_id}_{link['id']}"
+            keyboard_rows.append([InlineKeyboardButton(button_text, callback_data=button_callback)])
+        
+        keyboard_rows.append([InlineKeyboardButton("🚀 شروع", callback_data=f"start_{message_id}")])
+        reply_markup = InlineKeyboardMarkup(keyboard_rows)
+        try:
+            await callback_query.message.edit_reply_markup(reply_markup)
+            await callback_query.answer("انتخاب شما به‌روز شد.")
+        except MessageNotModified:
+            await callback_query.answer()
+        return
+
+    elif parts[0] == "start" and len(parts) == 2 and parts[1].isdigit():
+        message_id = int(parts[1])
+        post_data = await redis_cache.get(f"post:{message_id}")
+        if not post_data:
+            await callback_query.answer("خطا: اطلاعات این پست منقضی شده است.", show_alert=True)
+            return
+
+    
+        selected_links = [link for link in post_data['links'] if link.get('selected', False)]
+
+        if not selected_links:
+            await callback_query.answer("هیچ لینکی انتخاب نشده است!", show_alert=True)
+            return
+            
+        task = extractor_task.delay(post_data)
+        
+        await callback_handler.message.edit('عملیات استخراج شروع شد ...' , reply_markup = )
+
+        return
+
+    settings = await Settings.get_singleton()
+
+    if data == "change_uploader":
         await callback_query.answer()
-        ask_msg = await callback_query.message.reply_text("لطفا یوزرنیم آپلودر را ارسال کنید :")
+        ask_msg = await callback_query.message.reply_text("لطفا یوزرنیم آپلودر را ارسال کنید:")
         try:
             new_username_msg = await client.listen(callback_query.from_user.id, timeout=60)
-        except TimeoutError:
-            await ask_msg.edit_text("⏰ زمان وارد کردن یوزرنیم تمام شد. دوباره تلاش کن."); return
-        if not new_username_msg or not new_username_msg.text:
-            await ask_msg.edit_text("❌ یوزرنیم نامعتبر است. دوباره تلاش کن."); return
-        settings.uploader_username = new_username_msg.text.strip()
-        await settings.save()
-        try: 
-            await ask_msg.delete()
-            await new_username_msg.delete()
-        except: 
-            pass
-        await edit_settings_message(callback_query, settings)
+            if not new_username_msg or not new_username_msg.text:
+                await ask_msg.edit_text("❌ یوزرنیم نامعتبر است. دوباره تلاش کن."); return
+            settings.uploader_username = new_username_msg.text.strip()
+            await settings.save()
+            await edit_settings_message(callback_query, settings)
+        except asyncio.TimeoutError:
+            await ask_msg.edit_text("⏰ زمان وارد کردن یوزرنیم تمام شد. دوباره تلاش کن.")
+        finally:
+            if 'ask_msg' in locals(): await ask_msg.delete()
+            if 'new_username_msg' in locals() and new_username_msg: await new_username_msg.delete()
 
-    # تغییر نوع آپلودر
     elif data == "change_uploader_type":
         kb = KeyboardBuilder.inline(*[[(t, f"set_uploader_type_{t}")] for t in UploaderTypes.ALL])
         await callback_query.message.edit_text("نوع آپلودر را انتخاب کنید:", reply_markup=kb)
@@ -122,70 +184,9 @@ async def callback_handler(client, callback_query):
     else:
         await callback_query.answer()
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-# --------------------------------------------------------------------- SELF CLIENT ------------------------------------------------------------------------
-
-
-# @self_client.on_message(group=1)
-# async def self_client_handler(client, message):
-#     print('this is self clilient message ')
-
-
-
-
-# ---------------------------------------------------------------------BOT RUNNING------------------------------------------------------------------------
-
+# ---------------------------------------------------------------------
+# BOT RUNNING
+# ---------------------------------------------------------------------
 
 redis_cache = RedisCache()
 
@@ -197,15 +198,13 @@ async def main():
     await redis_cache.connect()
     logger.info("Redis connected.")
     await bot_client.start()
-    # await self_client.start()
     bot_info = await bot_client.get_me()
-    logger.info(f"Clients {bot_info.username} started successfully.")
+    logger.info(f"Bot client {bot_info.username} started successfully.")
     logger.info("Clients are now listening for incoming messages... (Press Ctrl+C to exit)")
     try:
-        await idle()  
+        await idle()
     finally:
         await bot_client.stop()
-        # await self_client.stop()
         await redis_cache.close()
         await Tortoise.close_connections()
         logger.info("Clients stopped, Redis connection closed, and DB connections closed.")

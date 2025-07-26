@@ -16,7 +16,7 @@ from os.path import abspath, dirname
 parent_dir = dirname(dirname(abspath(__file__)))
 sys.path.insert(0, parent_dir)
 
-from .utils import setup_logger
+from utils import setup_logger
 
 
 logger = setup_logger("tasks-log", level="INFO")

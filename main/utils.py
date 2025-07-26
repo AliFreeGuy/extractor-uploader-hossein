@@ -275,10 +275,11 @@ def extract_links(message):
                     start_pos = end_pos
 
                 results.append({
-                    "text": line if line else linked_text,   # کل خط
-                    "link": url,                             # لینک
-                    "offset_range": (offset, offset+length), # محدوده افست
-                    "linked_text": linked_text               # متن دقیق لینک شده
+                    "text": line if line else linked_text,  
+                    "link": url,                            
+                    "offset_start" : str(offset) , 
+                    "offset_end" : str(offset+length) ,
+                    "linked_text": linked_text 
                 })
 
     process_entities(message.text, message.entities)
