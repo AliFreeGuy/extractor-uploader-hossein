@@ -1,3 +1,5 @@
+# main/main.py
+
 import asyncio
 import uuid
 from os import environ as env
@@ -6,24 +8,20 @@ from pyrogram import Client, filters, idle
 from pyrogram.errors import MessageNotModified, UserAlreadyParticipant
 from pyrogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 from pyromod import listen
-from tortoise import Tortoise
 from celery.result import AsyncResult
-
 
 from .tasks import extractor_task
 from .utils import (API_HASH, API_ID, BOT_TOKEN, DEBUG, PROXY,
-                    RedisCache, SESSION_STRING, UploaderTypes, Settings,
-                    init_db, setup_logger, log_env_variables, ADMINS,
+                    RedisCache, UploaderTypes,
+                    setup_logger, log_env_variables, ADMINS,
                     KeyboardBuilder, build_settings_message, extract_links)
 
 logger = setup_logger("bot-log", level="INFO")
 
 bot_client = Client('bot-client', api_id=API_ID, api_hash=API_HASH, bot_token=BOT_TOKEN, proxy=PROXY)
+redis_cache = RedisCache() # نمونه‌سازی از ردیس کش
 
-# ---------------------------------------------------------------------
-# BOT HANDLERS
-# ---------------------------------------------------------------------
-
+# ... (هندلر bot_client_handler بدون تغییر)
 @bot_client.on_message(filters.chat(ADMINS))
 async def bot_client_handler(client, message):
     links = extract_links(message)
@@ -64,8 +62,10 @@ async def bot_client_handler(client, message):
     elif message.text == 'تنظیمات':
         await command_setting_handler(client, message)
 
+
+# <<<<<<< کدهای زیر جایگزین می‌شوند >>>>>>>
 async def command_setting_handler(client, message):
-    settings = await Settings.get_singleton()
+    settings = await redis_cache.get_settings()
     text, keyboard = build_settings_message(settings)
     await message.reply(text, reply_markup=keyboard)
 
@@ -81,24 +81,24 @@ async def callback_handler(client, callback_query):
     data = callback_query.data
     logger.info(f'callback data : {data}')
     
-    
-    
     if data == "toggle_auto_remove_sign":
-        settings = await Settings.get_singleton()
-        settings.auto_remove_sign = not settings.auto_remove_sign
-        await settings.save()
+        settings = await redis_cache.get_settings()
+        new_value = not settings.get('auto_remove_sign', False)
+        await redis_cache.update_setting("auto_remove_sign", new_value)
         await callback_query.answer("وضعیت حذف خودکار امضا تغییر کرد!")
+        settings['auto_remove_sign'] = new_value # به‌روزرسانی مقدار برای نمایش
         await edit_settings_message(callback_query, settings)
         return
 
     elif data == "toggle_auto_embed":
-        settings = await Settings.get_singleton()
-        settings.is_auto_embed_enabled = not settings.is_auto_embed_enabled
-        await settings.save()
+        settings = await redis_cache.get_settings()
+        new_value = not settings.get('is_auto_embed_enabled', False)
+        await redis_cache.update_setting("is_auto_embed_enabled", new_value)
         await callback_query.answer("وضعیت جاگذاری خودکار تغییر کرد!")
+        settings['is_auto_embed_enabled'] = new_value # به‌روزرسانی مقدار برای نمایش
         await edit_settings_message(callback_query, settings)
         return
-
+        
     parts = data.split("_")
     
     if parts[0] == "toggle" and len(parts) == 3 and parts[1].isdigit():
@@ -154,8 +154,6 @@ async def callback_handler(client, callback_query):
         await task_started_message.pin(both_sides = True)
         return
 
-    settings = await Settings.get_singleton()
-
     if data == "change_uploader":
         await callback_query.answer()
         ask_msg = await callback_query.message.reply_text("لطفا یوزرنیم آپلودر را ارسال کنید:")
@@ -163,8 +161,9 @@ async def callback_handler(client, callback_query):
             new_username_msg = await client.listen(callback_query.from_user.id, timeout=60)
             if not new_username_msg or not new_username_msg.text:
                 await ask_msg.edit_text("❌ یوزرنیم نامعتبر است. دوباره تلاش کن."); return
-            settings.uploader_username = new_username_msg.text.strip()
-            await settings.save()
+            new_username = new_username_msg.text.strip()
+            await redis_cache.update_setting("uploader_username", new_username)
+            settings = await redis_cache.get_settings()
             await edit_settings_message(callback_query, settings)
         except asyncio.TimeoutError:
             await ask_msg.edit_text("⏰ زمان وارد کردن یوزرنیم تمام شد. دوباره تلاش کن.")
@@ -180,17 +179,13 @@ async def callback_handler(client, callback_query):
     elif data.startswith("set_uploader_type_"):
         selected = data.replace("set_uploader_type_", "")
         if selected in UploaderTypes.ALL:
-            settings.uploader_type = selected
-            await settings.save()
+            await redis_cache.update_setting("uploader_type", selected)
             await callback_query.answer(f"نوع آپلودر روی {selected} تنظیم شد.")
+            settings = await redis_cache.get_settings()
             await edit_settings_message(callback_query, settings)
         else:
             await callback_query.answer("نوع آپلودر نامعتبر است!")
-
-
-
-
-
+            
     elif data.startswith('cancel_task:') : 
         try :
             task_id = data.split(':')[1]
@@ -208,13 +203,12 @@ async def callback_handler(client, callback_query):
 # BOT RUNNING
 # ---------------------------------------------------------------------
 
-redis_cache = RedisCache()
-
 async def main():
     log_env_variables()
     logger.info('<<< starting clients and connecting to Redis >>>')
-    await init_db()
-    logger.info("Database connected and schemas generated.")
+    # حذف فراخوانی init_db()
+    # await init_db()
+    # logger.info("Database connected and schemas generated.") # این خط هم حذف می‌شود
     await redis_cache.connect()
     logger.info("Redis connected.")
     await bot_client.start()
@@ -226,5 +220,10 @@ async def main():
     finally:
         await bot_client.stop()
         await redis_cache.close()
-        await Tortoise.close_connections()
-        logger.info("Clients stopped, Redis connection closed, and DB connections closed.")
+        # حذف بستن ارتباط با دیتابیس
+        # await Tortoise.close_connections()
+        logger.info("Clients stopped and Redis connection closed.")
+
+if __name__ == "__main__":
+    loop = asyncio.get_event_loop()
+    loop.run_until_complete(main())
