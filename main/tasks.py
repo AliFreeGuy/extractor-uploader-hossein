@@ -16,7 +16,7 @@ from os.path import abspath, dirname
 parent_dir = dirname(dirname(abspath(__file__)))
 sys.path.insert(0, parent_dir)
 
-from utils import setup_logger
+from .utils import setup_logger
 
 
 logger = setup_logger("tasks-log", level="INFO")
@@ -59,5 +59,7 @@ app.conf.update(
 @app.task(name='tasks',bind=True,default_retry_delay=1,soft_time_limit=43200)
 def extractor_task(self , data=None):
     logger.info(data)
-    time.sleep(15)
+    for i in range(20) : 
+        logger.info(i)
+        time.sleep(1)
     

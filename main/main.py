@@ -7,6 +7,8 @@ from pyrogram.errors import MessageNotModified, UserAlreadyParticipant
 from pyrogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 from pyromod import listen
 from tortoise import Tortoise
+from celery.result import AsyncResult
+
 
 from .tasks import extractor_task
 from .utils import (API_HASH, API_ID, BOT_TOKEN, DEBUG, PROXY,
@@ -77,7 +79,10 @@ async def edit_settings_message(callback_query, settings):
 @bot_client.on_callback_query()
 async def callback_handler(client, callback_query):
     data = callback_query.data
-
+    logger.info(f'callback data : {data}')
+    
+    
+    
     if data == "toggle_auto_remove_sign":
         settings = await Settings.get_singleton()
         settings.auto_remove_sign = not settings.auto_remove_sign
@@ -143,9 +148,10 @@ async def callback_handler(client, callback_query):
             return
             
         task = extractor_task.delay(post_data)
+        btn = KeyboardBuilder.inline([['کنسل' , f'cancel_task:{task.id}']])
         
-        await callback_handler.message.edit('عملیات استخراج شروع شد ...' , reply_markup = )
-
+        task_started_message = await callback_query.message.edit('عملیات استخراج شروع شد ...' , reply_markup =btn )
+        await task_started_message.pin(both_sides = True)
         return
 
     settings = await Settings.get_singleton()
@@ -181,6 +187,20 @@ async def callback_handler(client, callback_query):
         else:
             await callback_query.answer("نوع آپلودر نامعتبر است!")
 
+
+
+
+
+    elif data.startswith('cancel_task:') : 
+        try :
+            task_id = data.split(':')[1]
+            task = AsyncResult(task_id)
+            task.revoke(terminate=True)
+            await callback_query.answer(f'عملیات با موفقیت کنسل شد !' , show_alert = True)
+            await callback_query.message.delete()
+        except Exception as e :
+            logger.error(e)
+        
     else:
         await callback_query.answer()
 
